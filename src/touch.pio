@@ -1,0 +1,57 @@
+; Taken from https://github.com/AncientJames/jtouch/blob/main/jtouch.py and converted to standard assembly
+; This spends a fixed time in the loop, and counting how many charge / discharge cycles it can do
+
+.program touch
+
+mov isr, null
+
+; set y to the sample period count, by shifting in a 1 and a bunch of 0s
+set y, 1
+in y, 1
+in null, 15
+mov y, isr
+
+; clear the counter
+mov x, !null
+
+resample:
+
+; set pin to input...
+set pindirs, 0
+
+busy:
+; ...and wait for it to pull high
+jmp pin high
+jmp y-- busy
+jmp done
+
+high:
+; set pin to output and pull low
+set pindirs, 1
+set pins, 0
+
+; while that's going on, count the time spent outside of the busy loop
+jmp y-- dec1
+jmp done
+dec1:
+jmp y-- dec2
+jmp done
+dec2:
+jmp y-- dec3
+jmp done
+dec3:
+jmp y-- dec4
+jmp done
+dec4:
+jmp y-- dec5
+jmp done
+dec5:
+
+; count this cycle and repeat
+jmp x-- resample
+
+
+done:
+; time's up - push the count
+mov isr, x
+push block
