@@ -1,8 +1,6 @@
 #![no_std]
 #![no_main]
 
-// use defmt::info;
-// use defmt::debug;
 use defmt_rtt as _;
 use embedded_hal::digital::v2::OutputPin;
 use hal::gpio::{FunctionPio0, Pin, PullUp};
@@ -73,19 +71,8 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
-    // configure transmit & receive pins for Pio0.
-    let trigger: Pin<_, FunctionPio0, _> = pins.gpio14.into_function();
-    let echo: Pin<_, FunctionPio0, _> = pins.gpio15.into_function();
-    // PIN ids for use inside of PIO
-    let _trigger_pin_id = trigger.id().num;
-    let _echo_pin_id = echo.id().num;
-
     let mut led_pin = pins.gpio17.into_push_pull_output();
-    // let led_pin: Pin<_, FunctionPio0, _> = pins.gpio22.into_function();
-    let _led_pin_id = led_pin.id().num;
     let touch_pin: Pin<_, FunctionPio0, _> = pins.gpio16.into_function().into_pull_type::<PullUp>();
-    // let pull_type = touch_pin.pull_type();
-    // info!("Pull type is: {}", pull_type as i32);
     let touch_pin_id = touch_pin.id().num;
 
     let program_with_defines = pio_proc::pio_file!(
@@ -99,15 +86,10 @@ fn main() -> ! {
     let (sm, mut rx, _tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
         .set_pins(touch_pin_id, 1)
         .jmp_pin(touch_pin_id)
-        // .clock_divisor_fixed_point(1, 0)
         .build(sm0);
-    // pio.irq0().enable_sm_interrupt(0);
-    // The GPIO pin needs to be configured as an output.
-    // sm.set_pindirs([(touch_pin_id, hal::pio::PinDir::Input)]);
     sm.start();
     // PIO runs in background, independently from CPU
 
-    // let mut distance: u32 = 0;
     let mut channel = Channel::new();
     let mut toggle: bool = false;
 
