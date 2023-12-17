@@ -19,11 +19,18 @@ use rp2040_hal as hal;
 #[used]
 pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
 
+enum TouchState {
+    Warmup,
+    Idle,
+    Long
+}
+
 struct Channel {
     warmup: u32,
     level_lo: u32,
     level_hi: u32,
-    level: f32
+    level: f32,
+    _state: TouchState
 }
 
 impl Channel {
@@ -32,7 +39,8 @@ impl Channel {
             warmup: 100,
             level_lo: u32::MAX,
             level_hi: 0,
-            level: 0.0
+            level: 0.0,
+            _state: TouchState::Warmup
         }
     }
 
@@ -51,6 +59,22 @@ impl Channel {
             } else {
                 None
             }
+        }
+    }
+
+    fn state(&mut self, raw_val: u32) -> TouchState {
+        let level = self.normalize(raw_val);
+        if self.warmup > 0 {
+            return TouchState::Warmup
+        }
+        match level {
+            Some(lvl) => {
+                match lvl < 0.5 {
+                    true => TouchState::Long,
+                    false => TouchState::Idle
+                }
+            }
+            None => TouchState::Idle
         }
     }
 }
@@ -96,26 +120,16 @@ fn main() -> ! {
     loop {
         match rx.read() {
             Some(val) => {
-                match channel.normalize(val) {
-                    Some(level) => {
-                        match level > 0.5 {
-                            true => {
-                                led_pin.set_low().unwrap();
-                            }
-                            false => {
-                                led_pin.set_high().unwrap();
-                            }
+                match channel.state(val) {
+                    TouchState::Idle =>  led_pin.set_low().unwrap(),
+                    TouchState::Long =>  led_pin.set_high().unwrap(),
+                    TouchState::Warmup => {
+                        if toggle {
+                            led_pin.set_high().unwrap();
+                        } else {
+                            led_pin.set_low().unwrap();
                         }
-                    }
-                    None => {
-                        if channel.warmup > 0 {
-                            if toggle {
-                                led_pin.set_high().unwrap();
-                            } else {
-                                led_pin.set_low().unwrap();
-                            }
-                            toggle = ! toggle;
-                        }
+                        toggle = ! toggle;
                     }
                 };
             }
