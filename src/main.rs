@@ -25,6 +25,11 @@ enum TouchState {
     Long
 }
 
+enum LightState {
+    On,
+    Off
+}
+
 struct Channel {
     warmup: u32,
     level_lo: u32,
@@ -116,13 +121,25 @@ fn main() -> ! {
 
     let mut channel = Channel::new();
     let mut toggle: bool = false;
+    let mut last_light_state = LightState::Off;
 
     loop {
         match rx.read() {
             Some(val) => {
                 match channel.state(val) {
-                    TouchState::Idle =>  led_pin.set_low().unwrap(),
-                    TouchState::Long =>  led_pin.set_high().unwrap(),
+                    TouchState::Idle =>  (),
+                    TouchState::Long =>  {
+                        match last_light_state {
+                            LightState::Off =>  {
+                                led_pin.set_high().unwrap();
+                                last_light_state = LightState::On
+                            }
+                            LightState::On => {
+                                led_pin.set_low().unwrap();
+                                last_light_state = LightState::Off
+                            }
+                        }
+                    }
                     TouchState::Warmup => {
                         if toggle {
                             led_pin.set_high().unwrap();
