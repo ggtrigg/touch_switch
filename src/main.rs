@@ -1,14 +1,19 @@
 #![no_std]
 #![no_main]
 
+// use core::time::Duration;
+
 use defmt_rtt as _;
 use embedded_hal::digital::v2::OutputPin;
 use hal::gpio::{FunctionPio0, Pin, PullUp};
 use hal::pac;
 use hal::pio::PIOExt;
 use hal::Sio;
+// use hal::rtc::DateTime;
 use panic_halt as _;
 use rp2040_hal as hal;
+// use rtic_monotonic;
+// use rp2040_monotonic;
 // use pio_proc::pio_file;
 
 /// The linker will place this boot block at the start of our program image. We
@@ -19,6 +24,7 @@ use rp2040_hal as hal;
 #[used]
 pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
 
+#[derive(Clone, Copy)]
 enum TouchState {
     Warmup,
     Idle,
@@ -30,17 +36,21 @@ struct Channel {
     level_lo: u32,
     level_hi: u32,
     level: f32,
-    _state: TouchState
+    last_state: bool,
+    timer: rp2040_hal::Timer,
+    last_dt: u64
 }
 
 impl Channel {
-    fn new() -> Self {
+    fn new(timer: rp2040_hal::Timer) -> Self {
         Channel {
             warmup: 100,
             level_lo: u32::MAX,
             level_hi: 0,
             level: 0.0,
-            _state: TouchState::Warmup
+            last_state: false,
+            timer,
+            last_dt: 0
         }
     }
 
@@ -64,18 +74,41 @@ impl Channel {
 
     fn state(&mut self, raw_val: u32) -> TouchState {
         let level = self.normalize(raw_val);
+        let new_state;
+
         if self.warmup > 0 {
-            return TouchState::Warmup
-        }
-        match level {
-            Some(lvl) => {
-                match lvl < 0.5 {
-                    true => TouchState::Long,
-                    false => TouchState::Idle
+            new_state = TouchState::Warmup;
+        } else {
+            match level {
+                Some(lvl) => {
+                    match lvl < 0.5 {
+                        true => {
+                            match self.last_state {
+                                true => {
+                                    let diff = self.timer.get_counter().ticks() - self.last_dt;
+                                    new_state = match diff > 1_000 {
+                                        true => TouchState::Long,
+                                        false => TouchState::Idle
+                                    }
+                                }
+                                false => {
+                                    // Off to on, start timer
+                                    self.last_dt = self.timer.get_counter().ticks();
+                                    new_state = TouchState::Idle;
+                                }
+                            }
+                            self.last_state = true;
+                        }
+                        false => {
+                            new_state = TouchState::Idle;
+                            self.last_state = false;
+                        }
+                    }
                 }
+                None => { new_state = TouchState::Idle; }
             }
-            None => TouchState::Idle
         }
+        new_state
     }
 }
 
@@ -86,6 +119,11 @@ impl Channel {
 #[rp2040_hal::entry]
 fn main() -> ! {
     let mut pac = pac::Peripherals::take().unwrap();
+    let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
+    watchdog.enable_tick_generation(12);
+    let clocks = hal::clocks::init_clocks_and_plls(12_000_000, pac.XOSC, pac.CLOCKS, pac.PLL_SYS, pac.PLL_USB, &mut pac.RESETS, &mut watchdog).ok().unwrap();
+    let timer = hal::timer::Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
+    // let mono = rp2040_monotonic::Rp2040Monotonic::new(pac.TIMER);
 
     let sio = Sio::new(pac.SIO);
     let pins = hal::gpio::Pins::new(
@@ -114,7 +152,7 @@ fn main() -> ! {
     sm.start();
     // PIO runs in background, independently from CPU
 
-    let mut channel = Channel::new();
+    let mut channel = Channel::new(timer);
     let mut toggle: bool = false;
 
     loop {
