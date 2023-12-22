@@ -18,6 +18,8 @@ defmt = "0.3"
 defmt-rtt = "0.4"
 embedded-hal = { version = "0.2.5", features = ["unproven"] }
 fugit = "0.3.7"
+apa102-spi = "0.3.2"
+smart-leds = "0.3.0"
 
 # cargo build/run
 [profile.dev]

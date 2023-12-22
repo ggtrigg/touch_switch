@@ -12,7 +12,8 @@ use hal::Sio;
 use hal::spi::Spi;
 use panic_halt as _;
 use rp2040_hal as hal;
-// use pio_proc::pio_file;
+use smart_leds::{SmartLedsWrite, RGB8};
+use apa102_spi::Apa102;
 
 /// The linker will place this boot block at the start of our program image. We
 /// need this to help the ROM bootloader get our code up and running.
@@ -109,8 +110,13 @@ fn main() -> ! {
     let spi_pin_layout = (mosi, sclk);
     let spi = Spi::<_, _, _, 8>::new(spi_device, spi_pin_layout)
         .init(&mut pac.RESETS, 125_000_000u32.Hz(), 16_000_000u32.Hz(), MODE_0);
+    let mut led = Apa102::new(spi);
+    let mut led_data: [RGB8<>; 1] = [RGB8::default(); 1];
+    led_data[0].r = 0xff;
+    led_data[0].b = 0xff;
+    led_data[0].g = 0xff;
+    led_data[0].alpha(0x0);
 
-    let mut led_pin = pins.gpio17.into_push_pull_output();
     let touch_pin: Pin<_, FunctionPio0, _> = pins.gpio16.into_function().into_pull_type::<PullUp>();
     let touch_pin_id = touch_pin.id().num;
 
@@ -130,7 +136,6 @@ fn main() -> ! {
     // PIO runs in background, independently from CPU
 
     let mut channel = Channel::new();
-    let mut toggle: bool = false;
     let mut last_light_state = LightState::Off;
 
     loop {
@@ -141,22 +146,20 @@ fn main() -> ! {
                     TouchState::Long =>  {
                         match last_light_state {
                             LightState::Off =>  {
-                                led_pin.set_high().unwrap();
+                                led_data[0].alpha(0x0);
+                                led.write(led_data.iter().cloned()).unwrap();
                                 last_light_state = LightState::On
                             }
                             LightState::On => {
-                                led_pin.set_low().unwrap();
+                                led_data[0].alpha(0b11111);
+                                led.write(led_data.iter().cloned()).unwrap();
                                 last_light_state = LightState::Off
                             }
                         }
                     }
                     TouchState::Warmup => {
-                        if toggle {
-                            led_pin.set_high().unwrap();
-                        } else {
-                            led_pin.set_low().unwrap();
-                        }
-                        toggle = ! toggle;
+                        led_data[0].alpha(0b01111);
+                        led.write(led_data.iter().cloned()).unwrap();
                     }
                 };
             }
