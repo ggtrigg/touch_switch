@@ -933,6 +933,7 @@ dependencies = [
  "defmt",
  "defmt-rtt",
  "embedded-hal",
+ "fugit",
  "panic-halt",
  "panic-probe",
  "pio",

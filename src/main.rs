@@ -3,10 +3,13 @@
 
 use defmt_rtt as _;
 use embedded_hal::digital::v2::OutputPin;
-use hal::gpio::{FunctionPio0, Pin, PullUp};
+use embedded_hal::spi::MODE_0;
+use fugit::RateExtU32;
+use hal::gpio::{FunctionPio0, Pin, PullUp, FunctionSpi};
 use hal::pac;
 use hal::pio::PIOExt;
 use hal::Sio;
+use hal::spi::Spi;
 use panic_halt as _;
 use rp2040_hal as hal;
 // use pio_proc::pio_file;
@@ -99,6 +102,13 @@ fn main() -> ! {
         sio.gpio_bank0,
         &mut pac.RESETS,
     );
+
+    let sclk = pins.gpio2.into_function::<FunctionSpi>();
+    let mosi = pins.gpio3.into_function::<FunctionSpi>();
+    let spi_device = pac.SPI0;
+    let spi_pin_layout = (mosi, sclk);
+    let spi = Spi::<_, _, _, 8>::new(spi_device, spi_pin_layout)
+        .init(&mut pac.RESETS, 125_000_000u32.Hz(), 16_000_000u32.Hz(), MODE_0);
 
     let mut led_pin = pins.gpio17.into_push_pull_output();
     let touch_pin: Pin<_, FunctionPio0, _> = pins.gpio16.into_function().into_pull_type::<PullUp>();

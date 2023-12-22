@@ -17,6 +17,7 @@ pio = "0.2"
 defmt = "0.3"
 defmt-rtt = "0.4"
 embedded-hal = { version = "0.2.5", features = ["unproven"] }
+fugit = "0.3.7"
 
 # cargo build/run
 [profile.dev]
