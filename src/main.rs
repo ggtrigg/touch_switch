@@ -4,17 +4,18 @@
 // use core::time::Duration;
 
 use defmt_rtt as _;
-use embedded_hal::digital::v2::OutputPin;
-use hal::gpio::{FunctionPio0, Pin, PullUp};
-use hal::pac;
+// use embedded_hal::digital::v2::OutputPin;
+use embedded_hal::spi::MODE_0;
+use fugit::RateExtU32;
+use hal::gpio::{FunctionPio0, Pin, PullUp, FunctionSpi};
+use hal::{pac, Clock};
 use hal::pio::PIOExt;
 use hal::Sio;
-// use hal::rtc::DateTime;
+use hal::spi::Spi;
 use panic_halt as _;
 use rp2040_hal as hal;
-// use rtic_monotonic;
-// use rp2040_monotonic;
-// use pio_proc::pio_file;
+use smart_leds::{SmartLedsWrite, RGB8};
+use apa102_spi::Apa102;
 
 /// The linker will place this boot block at the start of our program image. We
 /// need this to help the ROM bootloader get our code up and running.
@@ -29,6 +30,11 @@ enum TouchState {
     Warmup,
     Idle,
     Long
+}
+
+enum LightState {
+    On,
+    Off
 }
 
 struct Channel {
@@ -120,10 +126,6 @@ impl Channel {
 fn main() -> ! {
     let mut pac = pac::Peripherals::take().unwrap();
     let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
-    watchdog.enable_tick_generation(12);
-    let clocks = hal::clocks::init_clocks_and_plls(12_000_000, pac.XOSC, pac.CLOCKS, pac.PLL_SYS, pac.PLL_USB, &mut pac.RESETS, &mut watchdog).ok().unwrap();
-    let timer = hal::timer::Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
-    // let mono = rp2040_monotonic::Rp2040Monotonic::new(pac.TIMER);
 
     let sio = Sio::new(pac.SIO);
     let pins = hal::gpio::Pins::new(
@@ -132,8 +134,28 @@ fn main() -> ! {
         sio.gpio_bank0,
         &mut pac.RESETS,
     );
+    let clocks = hal::clocks::init_clocks_and_plls(
+        12_000_000,
+        pac.XOSC,
+        pac.CLOCKS,
+        pac.PLL_SYS,
+        pac.PLL_USB,
+        &mut pac.RESETS,
+        &mut watchdog,
+    )
+    .ok()
+    .unwrap();
 
-    let mut led_pin = pins.gpio17.into_push_pull_output();
+    let sclk = pins.gpio10.into_function::<FunctionSpi>();
+    let mosi = pins.gpio11.into_function::<FunctionSpi>();
+    let spi_device = pac.SPI1;
+    let spi_pin_layout = (mosi, sclk);
+    let spi = Spi::<_, _, _, 8>::new(spi_device, spi_pin_layout)
+        .init(&mut pac.RESETS, clocks.peripheral_clock.freq(), 2_500_000u32.Hz(), MODE_0);
+    let mut led = Apa102::new_with_custom_postamble(spi, 32, true);
+    let mut led_data: [RGB8<>; 1] = [RGB8::default(); 1];
+    (led_data[0].r, led_data[0].b, led_data[0].g) = (0x00, 0x00, 0x00);
+
     let touch_pin: Pin<_, FunctionPio0, _> = pins.gpio16.into_function().into_pull_type::<PullUp>();
     let touch_pin_id = touch_pin.id().num;
 
@@ -152,22 +174,31 @@ fn main() -> ! {
     sm.start();
     // PIO runs in background, independently from CPU
 
-    let mut channel = Channel::new(timer);
-    let mut toggle: bool = false;
+    let mut channel = Channel::new();
+    let mut last_light_state = LightState::Off;
 
     loop {
         match rx.read() {
             Some(val) => {
                 match channel.state(val) {
-                    TouchState::Idle =>  led_pin.set_low().unwrap(),
-                    TouchState::Long =>  led_pin.set_high().unwrap(),
-                    TouchState::Warmup => {
-                        if toggle {
-                            led_pin.set_high().unwrap();
-                        } else {
-                            led_pin.set_low().unwrap();
+                    TouchState::Idle =>  (),
+                    TouchState::Long =>  {
+                        match last_light_state {
+                            LightState::Off =>  {
+                                (led_data[0].r, led_data[0].b, led_data[0].g) = (0x00, 0x00, 0x00);
+                                led.write(led_data.iter().cloned()).unwrap();
+                                last_light_state = LightState::On
+                            }
+                            LightState::On => {
+                                (led_data[0].r, led_data[0].b, led_data[0].g) = (0xff, 0xff, 0xff);
+                                led.write(led_data.iter().cloned()).unwrap();
+                                last_light_state = LightState::Off
+                            }
                         }
-                        toggle = ! toggle;
+                    }
+                    TouchState::Warmup => {
+                        (led_data[0].r, led_data[0].b, led_data[0].g) = (0x08, 0x08, 0x08);
+                        led.write(led_data.iter().cloned()).unwrap();
                     }
                 };
             }
