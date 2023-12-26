@@ -2,11 +2,11 @@
 #![no_main]
 
 use defmt_rtt as _;
-use embedded_hal::digital::v2::OutputPin;
+// use embedded_hal::digital::v2::OutputPin;
 use embedded_hal::spi::MODE_0;
 use fugit::RateExtU32;
 use hal::gpio::{FunctionPio0, Pin, PullUp, FunctionSpi};
-use hal::pac;
+use hal::{pac, Clock};
 use hal::pio::PIOExt;
 use hal::Sio;
 use hal::spi::Spi;
@@ -95,6 +95,7 @@ impl Channel {
 #[rp2040_hal::entry]
 fn main() -> ! {
     let mut pac = pac::Peripherals::take().unwrap();
+    let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
 
     let sio = Sio::new(pac.SIO);
     let pins = hal::gpio::Pins::new(
@@ -103,19 +104,27 @@ fn main() -> ! {
         sio.gpio_bank0,
         &mut pac.RESETS,
     );
+    let clocks = hal::clocks::init_clocks_and_plls(
+        12_000_000,
+        pac.XOSC,
+        pac.CLOCKS,
+        pac.PLL_SYS,
+        pac.PLL_USB,
+        &mut pac.RESETS,
+        &mut watchdog,
+    )
+    .ok()
+    .unwrap();
 
-    let sclk = pins.gpio2.into_function::<FunctionSpi>();
-    let mosi = pins.gpio3.into_function::<FunctionSpi>();
-    let spi_device = pac.SPI0;
+    let sclk = pins.gpio10.into_function::<FunctionSpi>();
+    let mosi = pins.gpio11.into_function::<FunctionSpi>();
+    let spi_device = pac.SPI1;
     let spi_pin_layout = (mosi, sclk);
     let spi = Spi::<_, _, _, 8>::new(spi_device, spi_pin_layout)
-        .init(&mut pac.RESETS, 125_000_000u32.Hz(), 16_000_000u32.Hz(), MODE_0);
-    let mut led = Apa102::new(spi);
+        .init(&mut pac.RESETS, clocks.peripheral_clock.freq(), 2_500_000u32.Hz(), MODE_0);
+    let mut led = Apa102::new_with_custom_postamble(spi, 32, true);
     let mut led_data: [RGB8<>; 1] = [RGB8::default(); 1];
-    led_data[0].r = 0xff;
-    led_data[0].b = 0xff;
-    led_data[0].g = 0xff;
-    led_data[0].alpha(0x0);
+    (led_data[0].r, led_data[0].b, led_data[0].g) = (0x00, 0x00, 0x00);
 
     let touch_pin: Pin<_, FunctionPio0, _> = pins.gpio16.into_function().into_pull_type::<PullUp>();
     let touch_pin_id = touch_pin.id().num;
@@ -146,19 +155,19 @@ fn main() -> ! {
                     TouchState::Long =>  {
                         match last_light_state {
                             LightState::Off =>  {
-                                led_data[0].alpha(0x0);
+                                (led_data[0].r, led_data[0].b, led_data[0].g) = (0x00, 0x00, 0x00);
                                 led.write(led_data.iter().cloned()).unwrap();
                                 last_light_state = LightState::On
                             }
                             LightState::On => {
-                                led_data[0].alpha(0b11111);
+                                (led_data[0].r, led_data[0].b, led_data[0].g) = (0xff, 0xff, 0xff);
                                 led.write(led_data.iter().cloned()).unwrap();
                                 last_light_state = LightState::Off
                             }
                         }
                     }
                     TouchState::Warmup => {
-                        led_data[0].alpha(0b01111);
+                        (led_data[0].r, led_data[0].b, led_data[0].g) = (0x08, 0x08, 0x08);
                         led.write(led_data.iter().cloned()).unwrap();
                     }
                 };
