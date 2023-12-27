@@ -1,10 +1,7 @@
 #![no_std]
 #![no_main]
 
-// use core::time::Duration;
-
 use defmt_rtt as _;
-// use embedded_hal::digital::v2::OutputPin;
 use embedded_hal::spi::MODE_0;
 use fugit::RateExtU32;
 use hal::gpio::{FunctionPio0, Pin, PullUp, FunctionSpi};
@@ -14,12 +11,12 @@ use hal::Sio;
 use hal::spi::Spi;
 use panic_halt as _;
 use rp2040_hal as hal;
-use smart_leds::{SmartLedsWrite, RGB8};
-use apa102_spi::Apa102;
 use crate::channel::Channel;
 use crate::channel::TouchState;
+use crate::light::Light;
 
 pub mod channel;
+pub mod light;
 
 /// The linker will place this boot block at the start of our program image. We
 /// need this to help the ROM bootloader get our code up and running.
@@ -71,12 +68,10 @@ fn main() -> ! {
     let spi = Spi::<_, _, _, 8>::new(pac.SPI1, spi_pin_layout)
         .init(&mut pac.RESETS, clocks.peripheral_clock.freq(), 2_500_000u32.Hz(), MODE_0);
 
-    let mut led = Apa102::new_with_custom_postamble(spi, 32, true);
-    let mut led_data: [RGB8<>; 1] = [RGB8::default(); 1];
+    let mut light = Light::new(spi);
     let mut light_level: u8 = 0;
     let mut sub_count: u8 = 0;
-    (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
-    led.write(led_data.iter().cloned()).unwrap();
+    light.level(light_level);
 
     let touch_pin: Pin<_, FunctionPio0, _> = pins.gpio16.into_function().into_pull_type::<PullUp>();
     let touch_pin_id = touch_pin.id().num;
@@ -115,8 +110,7 @@ fn main() -> ! {
                                             u8::MAX
                                         }
                                     };
-                                    (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
-                                    led.write(led_data.iter().cloned()).unwrap();
+                                    light.level(light_level);
                                 }
                                 LightState::Falling => {
                                     light_level = match light_level.checked_sub(1) {
@@ -126,8 +120,7 @@ fn main() -> ! {
                                             0
                                         }
                                     };
-                                    (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
-                                    led.write(led_data.iter().cloned()).unwrap();
+                                    light.level(light_level);
                                 }
                                 LightState::Off | LightState::On => ()
                             }
@@ -139,15 +132,13 @@ fn main() -> ! {
                         match last_light_state {
                             LightState::Off =>  {
                                 light_level = 0;
-                                (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
-                                led.write(led_data.iter().cloned()).unwrap();
+                                light.level(light_level);
                                 sub_count = 0;
                                 last_light_state = LightState::Rising
                             }
                             LightState::On => {
                                 light_level = 0xff;
-                                (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
-                                led.write(led_data.iter().cloned()).unwrap();
+                                light.level(light_level);
                                 sub_count = 0;
                                 last_light_state = LightState::Falling
                             }
