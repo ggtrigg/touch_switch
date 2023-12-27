@@ -29,12 +29,15 @@ pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
 enum TouchState {
     Warmup,
     Idle,
+    Short,
     Long
 }
 
 enum LightState {
     On,
-    Off
+    Off,
+    Rising,
+    Falling
 }
 
 struct Channel {
@@ -43,20 +46,20 @@ struct Channel {
     level_hi: u32,
     level: f32,
     last_state: bool,
-    timer: rp2040_hal::Timer,
-    last_dt: u64
+    last_touch_state: TouchState,
+    counter: u32
 }
 
 impl Channel {
-    fn new(timer: rp2040_hal::Timer) -> Self {
+    fn new() -> Self {
         Channel {
             warmup: 100,
             level_lo: u32::MAX,
             level_hi: 0,
             level: 0.0,
             last_state: false,
-            timer,
-            last_dt: 0
+            last_touch_state: TouchState::Idle,
+            counter: 0
         }
     }
 
@@ -87,34 +90,59 @@ impl Channel {
         } else {
             match level {
                 Some(lvl) => {
-                    match lvl < 0.5 {
-                        true => {
-                            match self.last_state {
-                                true => {
-                                    let diff = self.timer.get_counter().ticks() - self.last_dt;
-                                    new_state = match diff > 1_000 {
-                                        true => TouchState::Long,
-                                        false => TouchState::Idle
+                    if self.counter > 100 {      // Debounce
+                        match lvl < 0.5 {
+                            true => {
+                                match self.last_state {
+                                    true => {
+                                        new_state = match self.counter > 2_000 {
+                                            true => TouchState::Long,
+                                            false => TouchState::Idle
+                                        }
+                                    }
+                                    false => {
+                                        // Finger touched, start counting
+                                        new_state = TouchState::Idle;
+                                        self.counter = 0;
                                     }
                                 }
-                                false => {
-                                    // Off to on, start timer
-                                    self.last_dt = self.timer.get_counter().ticks();
-                                    new_state = TouchState::Idle;
-                                }
+                                self.last_state = true;
+                                self.count();
                             }
-                            self.last_state = true;
+                            false => {
+                                match self.last_state {
+                                    true => {   // Finger lifted
+                                        match self.counter != 0 && self.counter <= 2_000 {
+                                            true => { new_state = TouchState::Short }
+                                            false => { new_state = TouchState::Idle }
+                                        }
+                                        self.counter = 0;
+                                    }
+                                    false => {
+                                        new_state = TouchState::Idle;
+                                    }
+                                }
+                                self.last_state = false;
+                                self.count();
+                            }
                         }
-                        false => {
-                            new_state = TouchState::Idle;
-                            self.last_state = false;
-                        }
+                    } else {
+                        self.count();
+                        new_state = self.last_touch_state;
                     }
                 }
                 None => { new_state = TouchState::Idle; }
-            }
+            };
         }
+        self.last_touch_state = new_state;
         new_state
+    }
+
+    fn count(&mut self) {
+        self.counter = match self.counter.checked_add(1) {
+            Some(val) => val,
+            None => u32::MAX
+        };
     }
 }
 
@@ -148,13 +176,15 @@ fn main() -> ! {
 
     let sclk = pins.gpio10.into_function::<FunctionSpi>();
     let mosi = pins.gpio11.into_function::<FunctionSpi>();
-    let spi_device = pac.SPI1;
     let spi_pin_layout = (mosi, sclk);
-    let spi = Spi::<_, _, _, 8>::new(spi_device, spi_pin_layout)
+    let spi = Spi::<_, _, _, 8>::new(pac.SPI1, spi_pin_layout)
         .init(&mut pac.RESETS, clocks.peripheral_clock.freq(), 2_500_000u32.Hz(), MODE_0);
+
     let mut led = Apa102::new_with_custom_postamble(spi, 32, true);
     let mut led_data: [RGB8<>; 1] = [RGB8::default(); 1];
-    (led_data[0].r, led_data[0].b, led_data[0].g) = (0x00, 0x00, 0x00);
+    let mut light_level: u8 = 0;
+    (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
+    led.write(led_data.iter().cloned()).unwrap();
 
     let touch_pin: Pin<_, FunctionPio0, _> = pins.gpio16.into_function().into_pull_type::<PullUp>();
     let touch_pin_id = touch_pin.id().num;
@@ -181,25 +211,52 @@ fn main() -> ! {
         match rx.read() {
             Some(val) => {
                 match channel.state(val) {
-                    TouchState::Idle =>  (),
-                    TouchState::Long =>  {
+                    TouchState::Idle => {
                         match last_light_state {
-                            LightState::Off =>  {
-                                (led_data[0].r, led_data[0].b, led_data[0].g) = (0x00, 0x00, 0x00);
+                            LightState::Rising => {
+                                light_level = match light_level.checked_add(1) {
+                                    Some(val) => val,
+                                    None => {
+                                        last_light_state = LightState::On;
+                                        u8::MAX
+                                    }
+                                };
+                                (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
                                 led.write(led_data.iter().cloned()).unwrap();
-                                last_light_state = LightState::On
                             }
-                            LightState::On => {
-                                (led_data[0].r, led_data[0].b, led_data[0].g) = (0xff, 0xff, 0xff);
+                            LightState::Falling => {
+                                light_level = match light_level.checked_sub(1) {
+                                    Some(val) => val,
+                                    None => {
+                                        last_light_state = LightState::Off;
+                                        0
+                                    }
+                                };
+                                (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
                                 led.write(led_data.iter().cloned()).unwrap();
-                                last_light_state = LightState::Off
                             }
+                            LightState::Off | LightState::On => ()
                         }
                     }
-                    TouchState::Warmup => {
-                        (led_data[0].r, led_data[0].b, led_data[0].g) = (0x08, 0x08, 0x08);
-                        led.write(led_data.iter().cloned()).unwrap();
+                    TouchState::Long =>  (),
+                    TouchState::Short =>  {
+                        match last_light_state {
+                            LightState::Off =>  {
+                                light_level = 0;
+                                (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
+                                led.write(led_data.iter().cloned()).unwrap();
+                                last_light_state = LightState::Rising
+                            }
+                            LightState::On => {
+                                light_level = 0xff;
+                                (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
+                                led.write(led_data.iter().cloned()).unwrap();
+                                last_light_state = LightState::Falling
+                            }
+                            LightState::Rising | LightState::Falling => ()
+                        }
                     }
+                    TouchState::Warmup => ()
                 };
             }
             None => ()
