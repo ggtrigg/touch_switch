@@ -17,6 +17,7 @@ pub struct Light<S: State, D: SpiDevice, P: ValidSpiPinout<D>> {
     state: LightState,
     light_level: u8,
     sub_count: u8,
+    last_touch_state: TouchState,
 }
 
 impl<S: State, D: SpiDevice, P: ValidSpiPinout<D>> Light<S, D, P>
@@ -30,6 +31,7 @@ where
             state: LightState::Off,
             light_level: 0,
             sub_count: 0,
+            last_touch_state: TouchState::Warmup,
         }
     }
 
@@ -72,7 +74,27 @@ where
                     self.sub_count = 0;
                 }
             }
-            TouchState::Long => (),
+            // Long touch -> immediate on/off
+            TouchState::Long => {
+                if self.last_touch_state != TouchState::Long {
+                    match self.state {
+                        LightState::Off => {
+                            self.light_level = 0xff;
+                            self.level();
+                            self.sub_count = 0;
+                            self.state = LightState::On
+                        }
+                        LightState::On => {
+                            self.light_level = 0;
+                            self.level();
+                            self.sub_count = 0;
+                            self.state = LightState::Off
+                        }
+                        LightState::Rising | LightState::Falling => (),
+                    }
+                }
+            },
+            // Short touch -> gradual on/off
             TouchState::Short => match self.state {
                 LightState::Off => {
                     self.light_level = 0;
@@ -90,5 +112,6 @@ where
             },
             TouchState::Warmup => (),
         }
+        self.last_touch_state = touch_state;
     }
 }
