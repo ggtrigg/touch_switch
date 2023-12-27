@@ -24,6 +24,7 @@ use apa102_spi::Apa102;
 #[link_section = ".boot2"]
 #[used]
 pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
+static DIM_DIVISOR: u8 = 30;
 
 #[derive(Clone, Copy)]
 enum TouchState {
@@ -183,6 +184,7 @@ fn main() -> ! {
     let mut led = Apa102::new_with_custom_postamble(spi, 32, true);
     let mut led_data: [RGB8<>; 1] = [RGB8::default(); 1];
     let mut light_level: u8 = 0;
+    let mut sub_count: u8 = 0;
     (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
     led.write(led_data.iter().cloned()).unwrap();
 
@@ -212,30 +214,34 @@ fn main() -> ! {
             Some(val) => {
                 match channel.state(val) {
                     TouchState::Idle => {
-                        match last_light_state {
-                            LightState::Rising => {
-                                light_level = match light_level.checked_add(1) {
-                                    Some(val) => val,
-                                    None => {
-                                        last_light_state = LightState::On;
-                                        u8::MAX
-                                    }
-                                };
-                                (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
-                                led.write(led_data.iter().cloned()).unwrap();
+                        sub_count += 1;
+                        if sub_count >= DIM_DIVISOR {
+                            match last_light_state {
+                                LightState::Rising => {
+                                    light_level = match light_level.checked_add(1) {
+                                        Some(val) => val,
+                                        None => {
+                                            last_light_state = LightState::On;
+                                            u8::MAX
+                                        }
+                                    };
+                                    (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
+                                    led.write(led_data.iter().cloned()).unwrap();
+                                }
+                                LightState::Falling => {
+                                    light_level = match light_level.checked_sub(1) {
+                                        Some(val) => val,
+                                        None => {
+                                            last_light_state = LightState::Off;
+                                            0
+                                        }
+                                    };
+                                    (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
+                                    led.write(led_data.iter().cloned()).unwrap();
+                                }
+                                LightState::Off | LightState::On => ()
                             }
-                            LightState::Falling => {
-                                light_level = match light_level.checked_sub(1) {
-                                    Some(val) => val,
-                                    None => {
-                                        last_light_state = LightState::Off;
-                                        0
-                                    }
-                                };
-                                (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
-                                led.write(led_data.iter().cloned()).unwrap();
-                            }
-                            LightState::Off | LightState::On => ()
+                            sub_count = 0;
                         }
                     }
                     TouchState::Long =>  (),
@@ -245,12 +251,14 @@ fn main() -> ! {
                                 light_level = 0;
                                 (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
                                 led.write(led_data.iter().cloned()).unwrap();
+                                sub_count = 0;
                                 last_light_state = LightState::Rising
                             }
                             LightState::On => {
                                 light_level = 0xff;
                                 (led_data[0].r, led_data[0].b, led_data[0].g) = (light_level, light_level, light_level);
                                 led.write(led_data.iter().cloned()).unwrap();
+                                sub_count = 0;
                                 last_light_state = LightState::Falling
                             }
                             LightState::Rising | LightState::Falling => ()
