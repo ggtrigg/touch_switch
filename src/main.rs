@@ -12,7 +12,6 @@ use hal::spi::Spi;
 use panic_halt as _;
 use rp2040_hal as hal;
 use crate::channel::Channel;
-use crate::channel::TouchState;
 use crate::light::Light;
 
 pub mod channel;
@@ -25,14 +24,6 @@ pub mod light;
 #[link_section = ".boot2"]
 #[used]
 pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
-static DIM_DIVISOR: u8 = 30;
-
-enum LightState {
-    On,
-    Off,
-    Rising,
-    Falling
-}
 
 /// Entry point to our bare-metal application.
 ///
@@ -69,9 +60,6 @@ fn main() -> ! {
         .init(&mut pac.RESETS, clocks.peripheral_clock.freq(), 2_500_000u32.Hz(), MODE_0);
 
     let mut light = Light::new(spi);
-    let mut light_level: u8 = 0;
-    let mut sub_count: u8 = 0;
-    light.level(light_level);
 
     let touch_pin: Pin<_, FunctionPio0, _> = pins.gpio16.into_function().into_pull_type::<PullUp>();
     let touch_pin_id = touch_pin.id().num;
@@ -92,61 +80,11 @@ fn main() -> ! {
     // PIO runs in background, independently from CPU
 
     let mut channel = Channel::new();
-    let mut last_light_state = LightState::Off;
 
     loop {
         match rx.read() {
             Some(val) => {
-                match channel.state(val) {
-                    TouchState::Idle => {
-                        sub_count += 1;
-                        if sub_count >= DIM_DIVISOR {
-                            match last_light_state {
-                                LightState::Rising => {
-                                    light_level = match light_level.checked_add(1) {
-                                        Some(val) => val,
-                                        None => {
-                                            last_light_state = LightState::On;
-                                            u8::MAX
-                                        }
-                                    };
-                                    light.level(light_level);
-                                }
-                                LightState::Falling => {
-                                    light_level = match light_level.checked_sub(1) {
-                                        Some(val) => val,
-                                        None => {
-                                            last_light_state = LightState::Off;
-                                            0
-                                        }
-                                    };
-                                    light.level(light_level);
-                                }
-                                LightState::Off | LightState::On => ()
-                            }
-                            sub_count = 0;
-                        }
-                    }
-                    TouchState::Long =>  (),
-                    TouchState::Short =>  {
-                        match last_light_state {
-                            LightState::Off =>  {
-                                light_level = 0;
-                                light.level(light_level);
-                                sub_count = 0;
-                                last_light_state = LightState::Rising
-                            }
-                            LightState::On => {
-                                light_level = 0xff;
-                                light.level(light_level);
-                                sub_count = 0;
-                                last_light_state = LightState::Falling
-                            }
-                            LightState::Rising | LightState::Falling => ()
-                        }
-                    }
-                    TouchState::Warmup => ()
-                };
+                light.process(channel.state(val));
             }
             None => ()
         }
