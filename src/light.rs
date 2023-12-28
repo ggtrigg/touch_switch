@@ -3,7 +3,9 @@ use apa102_spi::Apa102;
 use rp2040_hal::spi::{Spi, SpiDevice, State, ValidSpiPinout};
 use smart_leds::{SmartLedsWrite, RGB8};
 
-static DIM_DIVISOR: u8 = 30;
+static DIM_DIVISOR: u16 = 512;
+
+#[derive(Clone, Copy, PartialEq)]
 pub enum LightState {
     On,
     Off,
@@ -16,7 +18,7 @@ pub struct Light<S: State, D: SpiDevice, P: ValidSpiPinout<D>> {
     led_data: [RGB8; 1],
     state: LightState,
     light_level: u8,
-    sub_count: u8,
+    sub_count: u16,
     last_touch_state: TouchState,
 }
 
