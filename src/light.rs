@@ -37,7 +37,18 @@ where
         }
     }
 
-    fn level(&mut self) {
+    fn off(&mut self) {
+        self.level(0);
+        self.state = LightState::Off;
+    }
+
+    fn on(&mut self) {
+        self.level(0xff);
+        self.state = LightState::On;
+    }
+
+    fn level(&mut self, amount: u8) {
+        self.light_level = amount;
         (self.led_data[0].r, self.led_data[0].b, self.led_data[0].g) =
             (self.light_level, self.light_level, self.light_level);
         self.led
@@ -52,24 +63,10 @@ where
                 if self.sub_count >= DIM_DIVISOR {
                     match self.state {
                         LightState::Rising => {
-                            self.light_level = match self.light_level.checked_add(1) {
-                                Some(val) => val,
-                                None => {
-                                    self.state = LightState::On;
-                                    u8::MAX
-                                }
-                            };
-                            self.level();
+                            self.increment();
                         }
                         LightState::Falling => {
-                            self.light_level = match self.light_level.checked_sub(1) {
-                                Some(val) => val,
-                                None => {
-                                    self.state = LightState::Off;
-                                    0
-                                }
-                            };
-                            self.level();
+                            self.decrement();
                         }
                         LightState::Off | LightState::On => (),
                     }
@@ -80,33 +77,20 @@ where
             TouchState::Long => {
                 if self.last_touch_state != TouchState::Long {
                     match self.state {
-                        LightState::Off => {
-                            self.light_level = 0xff;
-                            self.level();
-                            self.sub_count = 0;
-                            self.state = LightState::On
-                        }
-                        LightState::On => {
-                            self.light_level = 0;
-                            self.level();
-                            self.sub_count = 0;
-                            self.state = LightState::Off
-                        }
-                        LightState::Rising | LightState::Falling => (),
+                        LightState::Off => self.on(),
+                        LightState::On | LightState::Rising | LightState::Falling => self.off()
                     }
                 }
             },
             // Short touch -> gradual on/off
             TouchState::Short => match self.state {
                 LightState::Off => {
-                    self.light_level = 0;
-                    self.level();
+                    self.level(0);
                     self.sub_count = 0;
                     self.state = LightState::Rising
                 }
                 LightState::On => {
-                    self.light_level = 0xff;
-                    self.level();
+                    self.level(0xff);
                     self.sub_count = 0;
                     self.state = LightState::Falling
                 }
@@ -115,5 +99,27 @@ where
             TouchState::Warmup => (),
         }
         self.last_touch_state = touch_state;
+    }
+
+    fn increment(&mut self) {
+        let newval = match self.light_level.checked_add(1) {
+            Some(val) => val,
+            None => {
+                self.state = LightState::On;
+                u8::MAX
+            }
+        };
+        self.level(newval);
+    }
+
+    fn decrement(&mut self) {
+        let newval = match self.light_level.checked_sub(1) {
+            Some(val) => val,
+            None => {
+                self.state = LightState::Off;
+                0
+            }
+        };
+        self.level(newval);
     }
 }
