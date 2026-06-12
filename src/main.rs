@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+use defmt::*;
 use defmt_rtt as _;
 use embedded_hal::spi::MODE_0;
 use fugit::RateExtU32;
@@ -63,28 +64,46 @@ fn main() -> ! {
 
     let touch_pin: Pin<_, FunctionPio0, _> = pins.gpio16.into_function().into_pull_type::<PullUp>();
     let touch_pin_id = touch_pin.id().num;
-
-    let program_with_defines = pio_proc::pio_file!(
-        "./src/touch.pio",
-    );
-    let program = program_with_defines.program;
+    let sound_pin: Pin<_, FunctionPio0, _> = pins.gpio21.into_function();
+    let sound_pin_id = sound_pin.id().num;
 
     // Initialize and start PIO
-    let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
-    let installed = pio.install(&program).unwrap();
-    let (sm, mut rx, _tx) = rp2040_hal::pio::PIOBuilder::from_program(installed)
+    let (mut pio0, touch_sm, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
+    let (mut pio1, clap_sm, _, _, _) = pac.PIO1.split(&mut pac.RESETS);
+    let installed1 = pio0.install(&pio::pio_file!("./src/touch.pio").program).unwrap();
+    let installed2 = pio1.install(&pio::pio_file!("./src/test.pio").program).unwrap();
+    let (touch_sm, mut touch_rx, mut tx0) = rp2040_hal::pio::PIOBuilder::from_installed_program(installed1)
         .set_pins(touch_pin_id, 1)
         .jmp_pin(touch_pin_id)
-        .build(sm0);
-    sm.start();
+        .build(touch_sm);
+    touch_sm.start();
+    let (clap_sm, mut clap_rx, _tx0) = rp2040_hal::pio::PIOBuilder::from_installed_program(installed2)
+        .in_pin_base(sound_pin_id)
+        .jmp_pin(sound_pin_id)
+        .build(clap_sm);
+    clap_sm.start();
     // PIO runs in background, independently from CPU
 
     let mut channel = Channel::new();
+    tx0.write(32768);
+
+    debug!("Looping now...");
 
     loop {
-        match rx.read() {
+        match touch_rx.read() {
             Some(val) => {
+                debug!("Got touch val of {}", val);
                 light.process(channel.state(val));
+            }
+            None => ()
+        }
+        match clap_rx.read() {
+            Some(val) => {
+                // debug!{"Got clap val of {}", val}
+                match val > 15_000 {
+                    true => light.off(),
+                    false => ()
+                }
             }
             None => ()
         }

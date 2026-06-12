@@ -56,7 +56,7 @@ impl Channel {
         } else {
             match level {
                 Some(lvl) => {
-                    if self.counter > 100 {
+                    if self.counter > 200 {
                         // Debounce
                         match lvl < 0.5 {
                             true => {

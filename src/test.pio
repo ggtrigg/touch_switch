@@ -1,0 +1,18 @@
+.program test
+
+; set pindirs, 0
+
+; jmp pin gotclap
+set y, 0
+mov isr, y
+push noblock
+nop [31]
+; jmp end
+
+; gotclap:
+  set y, 21
+  mov isr, y
+  push noblock
+  ; nop [31]
+
+end:

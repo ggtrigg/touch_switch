@@ -1,0 +1,57 @@
+.program clap
+
+set pindirs, 0
+
+set y, 31
+in y, 5
+in y, 5
+in y, 5
+mov x, isr
+
+.wrap_target
+
+wait 1 pin 0
+
+mov y, x
+
+loop1:
+  nop [21]
+  nop [21]
+  jmp !y next1
+  jmp y-- loop1
+
+next1:
+  mov y, x
+
+loop2:
+  nop [31]
+  nop [31]
+  nop [31]
+  jmp pin pinhigh
+  jmp !y next2
+  jmp y-- loop2
+
+pinhigh:
+  mov isr, y
+  push
+  jmp after
+
+next2:
+  set y, 0
+  mov isr, y
+  push
+
+after:
+  mov y, x
+
+loop3:
+  nop [31]
+  nop [31]
+  nop [31]
+  nop [31]
+  jmp !y end
+  jmp y-- loop3
+
+end:
+
+.wrap

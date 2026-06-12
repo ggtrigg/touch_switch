@@ -1,57 +1,34 @@
-; Taken from https://github.com/AncientJames/jtouch/blob/main/jtouch.py and converted to standard assembly
-; This spends a fixed time in the loop, and counting how many charge / discharge cycles it can do
-
+; Touch sensor PIO program - optimized version
 .program touch
 
-mov isr, null
+; Load initial counter value from OSR
+pull block
+mov y, osr            ; Get sample period from OSR directly
+mov x, !null          ; Clear cycle counter
 
-; set y to the sample period count, by shifting in a 1 and a bunch of 0s
-set y, 1
-in y, 1
-in null, 15
-mov y, isr
-
-; clear the counter
-mov x, !null
-
+.wrap_target
 resample:
-
-; set pin to input...
-set pindirs, 0
+set pindirs, 0        ; Set pin to input
 
 busy:
-; ...and wait for it to pull high
-jmp pin high
-jmp y-- busy
-jmp done
+jmp pin high          ; Jump if pin is high
+jmp y-- busy          ; Decrement timeout counter
+jmp done              ; Timeout occurred
 
 high:
-; set pin to output and pull low
-set pindirs, 1
-set pins, 0
+set pindirs, 1        ; Set pin to output
+set pins, 0           ; Pull pin low
+jmp y-- countdown     ; Start discharge counting
+jmp done              ; Timeout occurred
 
-; while that's going on, count the time spent outside of the busy loop
-jmp y-- dec1
-jmp done
-dec1:
-jmp y-- dec2
-jmp done
-dec2:
-jmp y-- dec3
-jmp done
-dec3:
-jmp y-- dec4
-jmp done
-dec4:
-jmp y-- dec5
-jmp done
-dec5:
+countdown:
+jmp y-- cycle_end     ; Check if we should end the cycle
+jmp done              ; Timeout occurred
 
-; count this cycle and repeat
-jmp x-- resample
-
+cycle_end:
+jmp x-- resample      ; Count this cycle and repeat if not done
 
 done:
-; time's up - push the count
-mov isr, x
-push block
+mov isr, x            ; Move cycle count to ISR
+push block            ; Push result
+.wrap
