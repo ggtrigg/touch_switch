@@ -6,6 +6,16 @@ use defmt_rtt as _;
 
 static DIM_DIVISOR: u16 = 512;
 
+const GAMMA: [u8; 256] = {
+    let mut g = [0u8; 256];
+    let mut i = 0;
+    while i < 256 {
+        g[i] = ((i * i) / 255) as u8;
+        i += 1;
+    }
+    g
+};
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum LightState {
     On,
@@ -39,7 +49,7 @@ impl<D: SpiDevice, P: ValidSpiPinout<D>> Light<D, P> {
     fn write_led(&mut self, r: u8, g: u8, b: u8) {
         let brightness = 0xE0 | 0x1F;
         let start_frame = [0u8; 4];
-        let led_frame = [brightness, b, g, r];
+        let led_frame = [brightness, GAMMA[b as usize], GAMMA[g as usize], GAMMA[r as usize]];
         let end_frame = [0xFFu8; 4];
         
         self.spi.write(&start_frame).ok();

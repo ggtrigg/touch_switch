@@ -122,6 +122,7 @@ PIO0 runs the touch sensor, PIO1 runs the clap detector. Programs are compiled a
 - **`#![no_main]`** — uses `#[rp2040_hal::entry]` as the entry point
 - **Linker:** `flip-link` for stack overflow protection (stack placed at bottom of RAM)
 - **LED driver:** Direct `embedded_hal::blocking::spi::Write` calls (the `apa102-spi` crate was removed due to embedded-hal version incompatibility)
+- **Gamma correction:** A 256-byte lookup table (gamma ≈ 2.0, computed at compile time) maps linear brightness values to perceptually linear LED output
 - **Logging:** defmt over RTT, captured by `probe-rs run` or `cargo embed`
 - **Panic handler:** `panic-halt` — halts the CPU on panic (infinite loop)
 
