@@ -1,5 +1,5 @@
-#![no_std]
-#![no_main]
+#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), no_main)]
 
 use defmt::*;
 use defmt_rtt as _;
@@ -12,10 +12,9 @@ use hal::Sio;
 use hal::spi::Spi;
 use panic_halt as _;
 use rp2040_hal as hal;
-use crate::channel::Channel;
+use touch_switch::channel::Channel;
 use crate::light::Light;
 
-pub mod channel;
 pub mod light;
 
 /// The linker will place this boot block at the start of our program image. We
@@ -71,7 +70,7 @@ fn main() -> ! {
     let (mut pio0, touch_sm, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
     let (mut pio1, clap_sm, _, _, _) = pac.PIO1.split(&mut pac.RESETS);
     let installed1 = pio0.install(&pio::pio_file!("./src/touch.pio").program).unwrap();
-    let installed2 = pio1.install(&pio::pio_file!("./src/test.pio").program).unwrap();
+    let installed2 = pio1.install(&pio::pio_file!("./src/clap.pio").program).unwrap();
     let (touch_sm, mut touch_rx, mut tx0) = rp2040_hal::pio::PIOBuilder::from_installed_program(installed1)
         .set_pins(touch_pin_id, 1)
         .jmp_pin(touch_pin_id)
@@ -85,25 +84,23 @@ fn main() -> ! {
     // PIO runs in background, independently from CPU
 
     let mut channel = Channel::new();
-    tx0.write(32768);
+    tx0.write(200_000);  // Initial Y for first measurement
 
     debug!("Looping now...");
 
     loop {
         match touch_rx.read() {
             Some(val) => {
-                debug!("Got touch val of {}", val);
+                let next = 200_000;
+                tx0.write(next);  // Feed Y for next measurement
                 light.process(channel.state(val));
             }
             None => ()
         }
         match clap_rx.read() {
-            Some(val) => {
-                // debug!{"Got clap val of {}", val}
-                match val > 15_000 {
-                    true => light.off(),
-                    false => ()
-                }
+            Some(_val) => {
+                // Double clap detected (PIO pushes any nonzero value)
+                light.off();
             }
             None => ()
         }

@@ -1,4 +1,4 @@
-use super::channel::TouchState;
+use touch_switch::channel::TouchState;
 use embedded_hal::prelude::_embedded_hal_blocking_spi_Write;
 use rp2040_hal::spi::{Spi, SpiDevice, ValidSpiPinout, Enabled};
 use defmt::*;

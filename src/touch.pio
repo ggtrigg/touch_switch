@@ -1,12 +1,10 @@
 ; Touch sensor PIO program - optimized version
 .program touch
 
-; Load initial counter value from OSR
-pull block
-mov y, osr            ; Get sample period from OSR directly
-mov x, !null          ; Clear cycle counter
-
 .wrap_target
+pull block            ; Get timeout from CPU each cycle
+mov y, osr            ; Y = timeout
+mov x, !null          ; X = 0xFFFFFFFF
 resample:
 set pindirs, 0        ; Set pin to input
 

@@ -1,57 +1,53 @@
 .program clap
 
-set pindirs, 0
-
-set y, 31
-in y, 5
-in y, 5
-in y, 5
-mov x, isr
+; Initialize: build inner loop counter (32767) in ISR
+set x, 31
+in x, 5
+in x, 5
+in x, 5       ; ISR = 32767
 
 .wrap_target
+start:
 
-wait 1 pin 0
+; Phase 1: Wait for first clap
+wait 1 pin 0   ; Rising edge = first clap
+wait 0 pin 0   ; Falling edge = clap ended
 
-mov y, x
+; Phase 2: Open ~500ms timing window for second clap
+set y, 4       ; Outer loop: 4 × ~126ms = ~505ms
 
-loop1:
-  nop [21]
-  nop [21]
-  jmp !y next1
-  jmp y-- loop1
+main_loop:
+  mov x, isr   ; Inner loop: 32767 iterations (ISR preserved)
 
-next1:
-  mov y, x
-
-loop2:
-  nop [31]
-  nop [31]
-  nop [31]
-  jmp pin pinhigh
-  jmp !y next2
-  jmp y-- loop2
-
-pinhigh:
-  mov isr, y
-  push
-  jmp after
-
-next2:
-  set y, 0
-  mov isr, y
-  push
-
-after:
-  mov y, x
-
-loop3:
+inner_loop:
   nop [31]
   nop [31]
   nop [31]
   nop [31]
-  jmp !y end
-  jmp y-- loop3
+  nop [31]
+  nop [31]
+  nop [31]
+  nop [31]
+  nop [31]
+  nop [31]
+  nop [31]
+  nop [31]
+  nop [31]
+  nop [31]
+  nop [31]
+  jmp pin double_clap  ; Second clap detected?
+  jmp x-- inner_loop   ; Inner loop: 32767 × 482 cycles = ~126ms
 
-end:
+  jmp y-- main_loop    ; Outer loop: 4 × ~126ms = ~505ms window
 
+; Window expired, no second clap — restart from top
+jmp start
+
+double_clap:
+  push          ; Push ISR = 32767 to RX FIFO
+  mov y, isr    ; Debounce: load 32767 into Y
+
+quiet_loop:
+  jmp pin quiet_loop  ; Wait while pin HIGH (noise spike)
+  jmp y-- quiet_loop  ; Require ~1ms of continuous LOW before restarting
 .wrap
