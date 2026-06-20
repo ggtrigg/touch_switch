@@ -30,6 +30,8 @@ impl Default for Channel {
     }
 }
 
+const LONG_THRESHOLD: u32 = 300;
+
 impl Channel {
     pub fn new() -> Self {
         Self::default()
@@ -65,7 +67,7 @@ impl Channel {
                         true => {
                             match self.last_state {
                                 true => {
-                                    new_state = match self.counter > 2_000 {
+                                    new_state = match self.counter > LONG_THRESHOLD {
                                         true => TouchState::Long,
                                         false => TouchState::Idle,
                                     }
@@ -80,7 +82,7 @@ impl Channel {
                         false => {
                             match self.last_state {
                                 true => {
-                                    match self.counter != 0 && self.counter <= 2_000 {
+                                    match self.counter != 0 && self.counter <= LONG_THRESHOLD {
                                         true => new_state = TouchState::Short,
                                         false => new_state = TouchState::Idle,
                                     }
@@ -91,12 +93,34 @@ impl Channel {
                                 }
                             }
                             self.last_state = false;
-                            self.count();
+                            self.counter = 0;
                         }
                     }
                 } else {
-                    self.count();
-                    new_state = self.last_touch_state;
+                    match lvl < 0.5 {
+                        true => {
+                            self.last_state = true;
+                            self.count();
+                        }
+                        false => {
+                            if self.last_state {
+                                // Brief tap: release before main branch
+                                new_state = match self.counter > 5 {
+                                    true => TouchState::Short,
+                                    false => TouchState::Idle,
+                                };
+                                self.last_state = false;
+                                self.counter = 0;
+                                self.last_touch_state = new_state;
+                                return new_state;
+                            }
+                            self.counter = 0;
+                        }
+                    }
+                    new_state = match self.last_touch_state {
+                        TouchState::Short | TouchState::Long | TouchState::Warmup => TouchState::Idle,
+                        state => state,
+                    };
                 }
             }
             None => {
@@ -183,34 +207,44 @@ mod tests {
     }
 
     #[test]
-    fn test_short_touch_too_brief_is_idle() {
+    fn test_short_touch_one_frame_is_idle() {
         let mut ch = Channel::new();
         for _ in 0..100 {
             ch.state(1000);
         }
 
-        // Brief touch, released before debounce completes
+        // Single noise frame — too short to trigger Short
+        ch.state(1100);
+        assert_eq!(ch.state(1000), TouchState::Idle);
+    }
+
+    #[test]
+    fn test_short_touch_brief_is_short() {
+        let mut ch = Channel::new();
+        for _ in 0..100 {
+            ch.state(1000);
+        }
+
+        // Brief but real tap — enough frames to exceed noise threshold
         for _ in 0..50 {
             ch.state(1100);
         }
-        // Release before counter > 200
-        assert_eq!(ch.state(1000), TouchState::Idle);
+        assert_eq!(ch.state(1000), TouchState::Short);
     }
 
     // --- Long touch ---
 
     #[test]
-    fn test_long_touch_detected_after_2000_samples() {
+    fn test_long_touch_detected_after_300_samples() {
         let mut ch = Channel::new();
         for _ in 0..100 {
             ch.state(1000);
         }
 
-        // First 2000 iterations: counter ≤ 2000 → Idle (counter > 2000 needed for Long)
-        for _ in 0..2019 {
+        // Counter builds from 0. After 300 frames: counter = 301 → > 300 → Long
+        for _ in 0..301 {
             ch.state(1100);
         }
-        // The 2020th touch call has counter_before = 2020 > 2000 → Long
         assert_eq!(ch.state(1100), TouchState::Long);
     }
 
@@ -221,12 +255,12 @@ mod tests {
             ch.state(1000);
         }
 
-        // Hold past Long threshold
-        for _ in 0..2200 {
-            ch.state(1000);
+        // Hold well past Long threshold
+        for _ in 0..400 {
+            ch.state(1100);
         }
 
-        // Release: counter > 2000 → Short condition fails → Idle
+        // Release: counter > LONG_THRESHOLD → Short condition fails → Idle
         assert_eq!(ch.state(1000), TouchState::Idle);
     }
 
@@ -238,17 +272,17 @@ mod tests {
         }
 
         // Long touch hold
-        for _ in 0..2200 {
+        for _ in 0..400 {
             ch.state(1100);
         }
-        // Release (counter > 2000 → Idle, not Short)
+        // Release (counter > LONG_THRESHOLD → Idle, not Short)
         assert_eq!(ch.state(1000), TouchState::Idle);
 
         // New short touch
         for _ in 0..250 {
             ch.state(1100);
         }
-        // Release (counter <= 2000 → Short)
+        // Release (counter <= LONG_THRESHOLD → Short)
         assert_eq!(ch.state(1000), TouchState::Short);
     }
 
@@ -269,7 +303,7 @@ mod tests {
         for _ in 0..200 {
             ch.state(1100);
         }
-        // After debounce: still touching, counter < 2000 → Idle
+        // After debounce: still touching, counter ≤ LONG_THRESHOLD → Idle
         assert_eq!(ch.state(1100), TouchState::Idle);
     }
 

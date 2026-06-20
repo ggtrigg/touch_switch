@@ -106,7 +106,7 @@ impl<D: SpiDevice, P: ValidSpiPinout<D>> Light<D, P> {
             TouchState::Short => match self.state {
                 LightState::Off => {
                     debug!("Short touch: Off→on");
-                    self.level(0);
+                    self.level(15);
                     self.sub_count = 0;
                     self.state = LightState::Rising
                 }

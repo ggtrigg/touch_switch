@@ -5,7 +5,7 @@ use defmt::*;
 use defmt_rtt as _;
 use embedded_hal::spi::MODE_0;
 use fugit::RateExtU32;
-use hal::gpio::{FunctionPio0, Pin, PullUp, FunctionSpi};
+use hal::gpio::{FunctionPio0, FunctionPio1, Pin, PullUp, PullNone, FunctionSpi};
 use hal::{pac, Clock};
 use hal::pio::PIOExt;
 use hal::Sio;
@@ -63,14 +63,14 @@ fn main() -> ! {
 
     let touch_pin: Pin<_, FunctionPio0, _> = pins.gpio16.into_function().into_pull_type::<PullUp>();
     let touch_pin_id = touch_pin.id().num;
-    let sound_pin: Pin<_, FunctionPio0, _> = pins.gpio21.into_function();
+    let sound_pin: Pin<_, FunctionPio1, _> = pins.gpio21.into_function().into_pull_type::<PullNone>();
     let sound_pin_id = sound_pin.id().num;
 
     // Initialize and start PIO
     let (mut pio0, touch_sm, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
     let (mut pio1, clap_sm, _, _, _) = pac.PIO1.split(&mut pac.RESETS);
     let installed1 = pio0.install(&pio::pio_file!("./src/touch.pio").program).unwrap();
-    let installed2 = pio1.install(&pio::pio_file!("./src/clap.pio").program).unwrap();
+    let installed2 = pio1.install(&pio::pio_file!("./src/debug.pio").program).unwrap();
     let (touch_sm, mut touch_rx, mut tx0) = rp2040_hal::pio::PIOBuilder::from_installed_program(installed1)
         .set_pins(touch_pin_id, 1)
         .jmp_pin(touch_pin_id)
@@ -84,6 +84,7 @@ fn main() -> ! {
     // PIO runs in background, independently from CPU
 
     let mut channel = Channel::new();
+    let mut clap_cooldown = 0;
     tx0.write(200_000);  // Initial Y for first measurement
 
     debug!("Looping now...");
@@ -97,12 +98,17 @@ fn main() -> ! {
             }
             None => ()
         }
-        match clap_rx.read() {
-            Some(_val) => {
-                // Double clap detected (PIO pushes any nonzero value)
-                light.off();
-            }
-            None => ()
+        if let Some(val) = clap_rx.read() {
+            debug!("Clap edge: {}", val);
         }
+        // if clap_cooldown > 0 {
+        //     clap_cooldown -= 1;
+        //     // Drain FIFO during cooldown to prevent stale events
+        //     while let Some(_) = clap_rx.read() {}
+        // } else if let Some(_) = clap_rx.read() {
+        //     debug!("Double clap detected");
+        //     light.off();
+        //     clap_cooldown = 500;
+        // }
     }
 }

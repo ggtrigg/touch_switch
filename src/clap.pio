@@ -9,45 +9,48 @@ in x, 5       ; ISR = 32767
 .wrap_target
 start:
 
-; Phase 1: Wait for first clap
-wait 1 pin 0   ; Rising edge = first clap
-wait 0 pin 0   ; Falling edge = clap ended
+; Phase 1: Wait for first clap rising edge
+wait 1 pin 0   ; Rising edge = first clap starts
 
-; Phase 2: Open ~500ms timing window for second clap
-set y, 4       ; Outer loop: 4 × ~126ms = ~505ms
+; Debounce: wait for falling edge + filter glitches (~0.8ms continuous LOW)
+mov x, isr     ; X = 32767
+mov y, isr     ; Y = 32767
+debounce_fall:
+  jmp pin debounce_fall  ; Self-loop while pin HIGH
+  nop
+  jmp x-- debounce_fall  ; ~0.8ms of continuous LOW
 
+; Phase 2: Unconditional settle (~8.7ms, no pin check — won't absorb second clap)
+settle_fixed:
+  nop [31]
+  jmp y-- settle_fixed
+
+; Phase 3: ~170ms timing window for second clap
+set y, 5       ; Outer loop: 5 × ~34ms = ~170ms
 main_loop:
-  mov x, isr   ; Inner loop: 32767 iterations (ISR preserved)
-
+  mov x, isr   ; Inner loop: 32767 iterations
 inner_loop:
   nop [31]
   nop [31]
   nop [31]
   nop [31]
-  nop [31]
-  nop [31]
-  nop [31]
-  nop [31]
-  nop [31]
-  nop [31]
-  nop [31]
-  nop [31]
-  nop [31]
-  nop [31]
-  nop [31]
   jmp pin double_clap  ; Second clap detected?
-  jmp x-- inner_loop   ; Inner loop: 32767 × 482 cycles = ~126ms
+  jmp x-- inner_loop   ; 130 cycles, ~34ms
 
-  jmp y-- main_loop    ; Outer loop: 4 × ~126ms = ~505ms window
+  jmp y-- main_loop    ; Decrement Y, jump if non-zero
 
 ; Window expired, no second clap — restart from top
 jmp start
 
 double_clap:
-  push          ; Push ISR = 32767 to RX FIFO
-  mov y, isr    ; Debounce: load 32767 into Y
-
+  push          ; Push ISR to RX FIFO (ISR cleared by push)
+  set x, 31     ; Re-initialize ISR = 32767
+  in x, 5
+  in x, 5
+  in x, 5
+  mov y, isr    ; Y = 32767
 quiet_loop:
-  jmp pin quiet_loop  ; Wait while pin HIGH (noise spike)
-  jmp y-- quiet_loop  ; Require ~1ms of continuous LOW before restarting
+  jmp pin quiet_loop  ; Self-loop while pin HIGH (noise/ringing)
+  nop [31]
+  jmp y-- quiet_loop  ; ~8.7ms of continuous LOW before restarting
 .wrap

@@ -1,0 +1,6 @@
+.program clap
+.wrap_target
+  wait 1 pin 0
+  push
+  wait 0 pin 0
+.wrap
