@@ -17,6 +17,44 @@ use crate::light::Light;
 
 pub mod light;
 
+const CLAP_DEBOUNCE_US: u64 = 50_000;
+const CLAP_WINDOW_US: u64 = 1_000_000;
+const CLAP_COOLDOWN_US: u64 = 1_000_000;
+
+enum ClapState {
+    Idle,
+    InBurst { t_last: u64, t_start: u64 },
+    WaitingSecond { t_start: u64 },
+    Cooldown { t_start: u64, t_end: u64 },
+}
+
+impl ClapState {
+    fn edge(self, now: u64) -> Self {
+        match self {
+            Self::Idle => Self::InBurst { t_last: now, t_start: now },
+            Self::InBurst { t_start, .. } => Self::InBurst { t_last: now, t_start },
+            Self::WaitingSecond { t_start } => {
+                if now.saturating_sub(t_start) < CLAP_WINDOW_US {
+                    Self::Cooldown { t_start: now, t_end: now + CLAP_COOLDOWN_US }
+                } else {
+                    Self::InBurst { t_last: now, t_start: now }
+                }
+            }
+            Self::Cooldown { .. } => self,
+        }
+    }
+}
+
+fn micros(timer: &pac::TIMER) -> u64 {
+    loop {
+        let high = timer.timerawh().read().bits();
+        let low = timer.timerawl().read().bits();
+        if high == timer.timerawh().read().bits() {
+            break (high as u64) << 32 | low as u64;
+        }
+    }
+}
+
 /// The linker will place this boot block at the start of our program image. We
 /// need this to help the ROM bootloader get our code up and running.
 /// Note: This boot block is not necessary when using a rp-hal based BSP
@@ -70,7 +108,7 @@ fn main() -> ! {
     let (mut pio0, touch_sm, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
     let (mut pio1, clap_sm, _, _, _) = pac.PIO1.split(&mut pac.RESETS);
     let installed1 = pio0.install(&pio::pio_file!("./src/touch.pio").program).unwrap();
-    let installed2 = pio1.install(&pio::pio_file!("./src/debug.pio").program).unwrap();
+    let installed2 = pio1.install(&pio::pio_file!("./src/clap.pio").program).unwrap();
     let (touch_sm, mut touch_rx, mut tx0) = rp2040_hal::pio::PIOBuilder::from_installed_program(installed1)
         .set_pins(touch_pin_id, 1)
         .jmp_pin(touch_pin_id)
@@ -84,7 +122,7 @@ fn main() -> ! {
     // PIO runs in background, independently from CPU
 
     let mut channel = Channel::new();
-    let mut clap_cooldown = 0;
+    let mut clap_state = ClapState::Idle;
     tx0.write(200_000);  // Initial Y for first measurement
 
     debug!("Looping now...");
@@ -98,17 +136,53 @@ fn main() -> ! {
             }
             None => ()
         }
-        if let Some(val) = clap_rx.read() {
-            debug!("Clap edge: {}", val);
+
+        let now = micros(&pac.TIMER);
+
+        // Process all pending clap edges
+        while let Some(_) = clap_rx.read() {
+            clap_state = clap_state.edge(now);
+            if matches!(clap_state, ClapState::Cooldown { .. }) {
+                while let Some(_) = clap_rx.read() {}
+                break;
+            }
         }
-        // if clap_cooldown > 0 {
-        //     clap_cooldown -= 1;
-        //     // Drain FIFO during cooldown to prevent stale events
-        //     while let Some(_) = clap_rx.read() {}
-        // } else if let Some(_) = clap_rx.read() {
-        //     debug!("Double clap detected");
-        //     light.off();
-        //     clap_cooldown = 500;
-        // }
+
+        // Check time-based state transitions
+        clap_state = match clap_state {
+            ClapState::InBurst { t_last, t_start } => {
+                if now.saturating_sub(t_last) > CLAP_DEBOUNCE_US {
+                    debug!("Waiting for second clap...");
+                    ClapState::WaitingSecond { t_start }
+                } else {
+                    ClapState::InBurst { t_last, t_start }
+                }
+            }
+            ClapState::WaitingSecond { t_start } => {
+                if now.saturating_sub(t_start) > CLAP_WINDOW_US {
+                    debug!("Clap window expired, resetting...");
+                    ClapState::Idle
+                } else {
+                    ClapState::WaitingSecond { t_start }
+                }
+            }
+            ClapState::Cooldown { t_start, t_end } => {
+                if now == t_start {
+                    debug!("Clap cooldown started");
+                    if light.current_level() > 0 {
+                        light.off();
+                    } else {
+                        light.on();
+                    }
+                }
+                if now >= t_end {
+                    debug!("Clap cooldown expired, resetting...");
+                    ClapState::Idle
+                } else {
+                    ClapState::Cooldown { t_start, t_end }
+                }
+            }
+            other => other,
+        };
     }
 }

@@ -72,6 +72,10 @@ impl<D: SpiDevice, P: ValidSpiPinout<D>> Light<D, P> {
         self.write_led(amount, amount, amount);
     }
 
+    pub fn current_level(&self) -> u8 {
+        self.light_level
+    }
+
     pub fn process(&mut self, touch_state: TouchState) {
         match touch_state {
             TouchState::Idle => {
